@@ -4,12 +4,45 @@ Date: 5/3/2025
 GEOG 4303 Final Project
 WUI Mapping Module - Module for better function organization
 *********************************************'''
+import os
 import arcpy
 import arcpy.sa as sa
 import numpy
 import numpy as np
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import classification_report
+
+def promptFloat(message, default=None):
+    '''Prompts until a valid float is entered. Blank input returns default, if given.'''
+    while True:
+        raw = input(message).strip()
+        if raw == "" and default is not None:
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            hint = f" (or press Enter for {default})" if default is not None else ""
+            print(f"Invalid number, please try again{hint}.")
+
+def promptInt(message, default=None):
+    '''Prompts until a valid whole number is entered. Blank input returns default, if given.'''
+    while True:
+        raw = input(message).strip()
+        if raw == "" and default is not None:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            hint = f" (or press Enter for {default})" if default is not None else ""
+            print(f"Invalid whole number, please try again{hint}.")
+
+def promptYesNo(message):
+    '''Prompts until the user enters yes or no (case-insensitive).'''
+    while True:
+        raw = input(message).strip().lower()
+        if raw in ("yes", "no"):
+            return raw
+        print("Please enter 'yes' or 'no'.")
 
 def vegWUISelectNLCD(nlcd_numpy,lowLeftPnt,cellSize):
     '''Helps the process of mapping WUI with vegetation classes.
@@ -73,9 +106,9 @@ def compareWUIMaps(cellSize,lowLeftPnt,wui_intermix_select,wui_interface_select,
     # COMPARISON TO SILVIS WUI
     # STEP 1: DATA PREPARATION
     # Download SILVIS data for area of interest: https://silvis.forest.wisc.edu/data/wui-change/
-    # Put SILVIS data in data folder
-    # Define the shapefile
-    silvis = r'/silvis_data/CA_wui_block_1990_2020_LA.shp'
+    # Put SILVIS data in the silvis_data folder
+    # Define the shapefile, relative to the current arcpy workspace
+    silvis = os.path.join(arcpy.env.workspace, 'silvis_data', 'CA_wui_block_1990_2020_LA.shp')
 
     # Select areas of WUI from the shapefile for 2020
     #WUICLASS_2 is for year 2020. You should change this field if you want a different year.
@@ -122,7 +155,7 @@ def compareWUIMaps(cellSize,lowLeftPnt,wui_intermix_select,wui_interface_select,
               'True Negative': np.count_nonzero(combine_both == 0)}
 
     accuracy = (mydict['True Positive'] + mydict['True Negative']) / (mydict['True Positive'] + mydict['False Positive'] + mydict['True Negative'] + mydict['False Negative'])
-    precision = mydict['True Positive'] / (mydict['True Positive'] + mydict['True Negative'])
+    precision = mydict['True Positive'] / (mydict['True Positive'] + mydict['False Positive'])
     recall = (mydict['True Positive']) / (mydict['True Positive'] + mydict['False Negative'])
     F1 = (2 * precision * recall) / (precision + recall)
     print(f"Accuracy: {round(accuracy,2)}")

@@ -5,6 +5,7 @@ GEOG 4303 Final Project
 WUI Mapping Tool - Main .py file
 *********************************************'''
 
+import os
 import numpy
 import numpy as np
 import arcpy
@@ -13,17 +14,24 @@ import arcpy.sa as sa
 import wui_mapping_module
 from sklearn.metrics import ConfusionMatrixDisplay
 
-# Edit the path below to define your workspace.
-env.workspace = r"C:\Users\warno\Desktop\wui_mapping_workspace"
+# Workspace defaults to this script's folder. Override by setting the
+# WUI_MAPPING_WORKSPACE environment variable if you want to run against
+# a different location.
+BASE_DIR = os.environ.get("WUI_MAPPING_WORKSPACE", os.path.dirname(os.path.abspath(__file__)))
+env.workspace = BASE_DIR
 env.overwriteOutput = 1
 arcpy.CheckOutExtension("Spatial")
+
+# Make sure the folders that intermediate/final outputs get saved into exist.
+os.makedirs(os.path.join(BASE_DIR, "steps"), exist_ok=True)
+os.makedirs(os.path.join(BASE_DIR, "results"), exist_ok=True)
 
 # DATA PREPARATION
 # Define the NLCD raster from the data folder.
 # This is the input raster that you can clip to your own study area of interest.
 # You can use our sample data area for LA, or you can clip an NLCD
 # raster to your own area of interest and input the name and path the line below.
-nlcd = sa.Raster(r'/data/nlcd_2020.tif')
+nlcd = sa.Raster(os.path.join(BASE_DIR, "data", "nlcd_2020.tif"))
 print("NLCD height:",nlcd.height)
 print("NLCD width:",nlcd.width)
 print("NLCD cell height:",nlcd.meanCellHeight)
@@ -31,7 +39,7 @@ print("NLCD cell width:",nlcd.meanCellWidth)
 
 # Define the BUPL raster
 # We will clip the BUPL raster in this script, so you can use a larger BUPL raster if you want.
-bupl = sa.Raster(r'/data/BUPL_2020.tif')
+bupl = sa.Raster(os.path.join(BASE_DIR, "data", "BUPL_2020.tif"))
 arcpy.env.snapRaster = nlcd #https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/snap-raster.htm
 # Snap raster allows us to make sure extents of both NLCD and BUPL rasters are the same
 arcpy.env.extent = nlcd.extent
@@ -92,7 +100,7 @@ while True:
     print("---Question 1---")
     print('Would you like to map the WUI according to different \n'
           'types of vegetation cover? Type yes or no.')
-    vegCheckQ1 = input("yes/no:")
+    vegCheckQ1 = wui_mapping_module.promptYesNo("yes/no:")
     if vegCheckQ1 == 'yes':
         forest, shrubland = wui_mapping_module.vegWUISelectNLCD(nlcd_numpy, lowLeftPnt, cellSize)
         classList = [bupl_numpy, vegetation, forest, shrubland]
@@ -115,11 +123,7 @@ print("---Question 2---")
 print("Choose radius for circular moving window...\nRadius of 1 = 250m")
 print("Whole numbers only.")
 print("Standard radius: 2")
-question2 = input("Enter radius size:")
-try:
-    radius = int(question2)
-except ValueError:
-    print("Invalid number")
+radius = wui_mapping_module.promptInt("Enter radius size:", default=2)
 
 #run the moving window function (circleWindow)
 result = wui_mapping_module.circleWindow(classList,classListOut,classListNames,radius)
@@ -129,11 +133,7 @@ print("---Question 3---")
 print("Choose threshold for minimum number of buildings per cell:")
 print("Standard threshold: 6.17")
 print("Alternative threshold: 1")
-question3 = input("Enter threshold:")
-try:
-    building_threshold = float(question3)
-except ValueError:
-    print("Invalid number")
+building_threshold = wui_mapping_module.promptFloat("Enter threshold:", default=6.17)
 
 developed_win = result[0] #select bupl moving window result
 developed_select = np.where((developed_win >= building_threshold), 1, 0) #select areas >= threshold
@@ -149,11 +149,7 @@ vegetation_win_raster.save('steps/vegetation_win.tif')
 print("---Question 4---")
 print("Choose vegetation areas greater than x percent for intermix criteria")
 print("Standard percentage: 50")
-question4 = input("Enter percent value:")
-try:
-    veggie_percent_g = float(question4)
-except ValueError:
-    print("Invalid number")
+veggie_percent_g = wui_mapping_module.promptFloat("Enter percent value:", default=50)
 veggie_percent_convert_g = veggie_percent_g *0.01
 # Select areas greater than input
 vegetation_select_greater = np.where((vegetation_win >= veggie_percent_convert_g), 1, 0)
@@ -170,11 +166,7 @@ print("---Question 5---")
 print("Choose large vegetation area size...")
 print("Input units in square km:")
 print("Standard size: 5")
-question5 = input("Enter size:")
-try:
-    sq_km = float(question5)
-except ValueError:
-    print("Invalid number")
+sq_km = wui_mapping_module.promptFloat("Enter size:", default=5)
 # Calculate number of 250x250m cells needed for x km^2
 sq_meters = sq_km * 1000000
 square_cell_area = 250*250
@@ -185,11 +177,7 @@ print("Number of cells for",sq_km,"square km:", veggie_area)
 print("---Question 6---")
 print("Select vegetation % coverage for 'large vegetation areas'")
 print("Standard value: 75")
-question6 = input("Enter percent:")
-try:
-    large_veg_percent = float(question6)
-except ValueError:
-    print("Invalid number")
+large_veg_percent = wui_mapping_module.promptFloat("Enter percent:", default=75)
 large_veg_percent_convert = large_veg_percent * 0.01
 #select >= this value from the vegetation moving window
 vegetation_select_for_interface = np.where((vegetation_win >= large_veg_percent_convert), 1, 0)
@@ -228,11 +216,7 @@ print("---Question 7---")
 print("Choose the buffer distance for vegetation areas \nof at least your input of",sq_km,"square km")
 print("Input units in kilometers")
 print("Standard buffer distance: 2.4")
-question7 = input("Enter size:")
-try:
-    buff_dist = float(question7)
-except ValueError:
-    print("Invalid number")
+buff_dist = wui_mapping_module.promptFloat("Enter size:", default=2.4)
 
 buff_m = buff_dist * 1000 # convert km to m for buffer tool
 
@@ -298,14 +282,14 @@ while True:
     print("Would you like to compare your output WUI map to \n"
           "a SILVIS Lab WUI map?")
     print("Prototype: statistics of Accuracy, Precision, Recall, and F1, will be calculated.")
-    question8 = input("Enter yes/no:")
+    question8 = wui_mapping_module.promptYesNo("Enter yes/no:")
     if question8 == 'yes':
         print("Working on comparison statistics...")
         silvis_intermix, silvis_interface = wui_mapping_module.compareWUIMaps(cellSize, lowLeftPnt, wui_intermix_select, wui_interface_select,bupl,bupl_clipped)
         print("---Question 9---")
         print("Do you want to use SKLearn to recompute statistics and a \n"
               "confusion matrix to compare your WUI map to the SILVIS WUI map?")
-        question9 = input("Enter yes/no:")
+        question9 = wui_mapping_module.promptYesNo("Enter yes/no:")
         if question9 =='yes':
             print("Working on confusion matrix...")
             cMatrix = wui_mapping_module.computeConfusionMatrixWUI(wui_intermix_select, wui_interface_select, silvis_intermix, silvis_interface)
