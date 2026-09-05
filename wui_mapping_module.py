@@ -192,7 +192,7 @@ def computeConfusionMatrixWUI(wui_intermix_select,wui_interface_select,silvis_in
     print("Confusion Matrix:\n", cm)
     return cm
 
-def mapVegWUI(result,lowLeftPnt,cellSize,wui_interface_select,wui_intermix_select):
+def mapVegWUI(result,lowLeftPnt,cellSize,wui_interface_select,wui_intermix_select,resultTag=""):
     '''This function applies vegetation classes to an output WUI map.
     It uses moving window outputs for 'forest' and 'shrubland' classes, and
     selects areas greater than a threshold of this type of vegetation cover.
@@ -324,5 +324,5 @@ def mapVegWUI(result,lowLeftPnt,cellSize,wui_interface_select,wui_intermix_selec
     wui_veg_final_numpy = wui_interface_forest_shrub_overlap + wui_intermix_forest_shrub_overlap_reclass + wui_interface_forest_overlap_reclass + wui_intermix_forest_overlap_reclass + wui_interface_shrubland_overlap_reclass + wui_intermix_shrubland_overlap_reclass
 
     wui_veg_final_numpy_r = arcpy.NumPyArrayToRaster(wui_veg_final_numpy, lowLeftPnt, cellSize, cellSize)
-    wui_veg_final_numpy_r.save('results/wui_veg.tif')
+    wui_veg_final_numpy_r.save(f'results/wui_veg{resultTag}.tif')
     print("*****ADDITIONAL WUI MAP WITH VEGETATION CLASSES COMPLETE*****")

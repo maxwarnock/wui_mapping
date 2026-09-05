@@ -5,7 +5,9 @@ GEOG 4303 Final Project
 WUI Mapping Tool - Main .py file
 *********************************************'''
 
+import glob
 import os
+import re
 import numpy
 import numpy as np
 import arcpy
@@ -26,12 +28,59 @@ arcpy.CheckOutExtension("Spatial")
 os.makedirs(os.path.join(BASE_DIR, "steps"), exist_ok=True)
 os.makedirs(os.path.join(BASE_DIR, "results"), exist_ok=True)
 
+
+def find_data_file(pattern, description, override_env_var):
+    '''Finds a data file in data/ matching pattern (e.g. "nlcd_*.tif"),
+    so this script works with whatever year/state download_data.py last
+    produced, instead of a hardcoded filename. If more than one file
+    matches (e.g. leftover sample data alongside a fresh download), the
+    most recently modified one is used. Set the given environment
+    variable to an exact path to bypass this and pick a specific file.'''
+    override = os.environ.get(override_env_var)
+    if override:
+        print(f"Using {description} from {override_env_var}: {override}")
+        return override
+
+    matches = sorted(glob.glob(os.path.join(BASE_DIR, "data", pattern)))
+    if not matches:
+        raise FileNotFoundError(
+            f"No {description} found in data/ matching '{pattern}'. "
+            f"Run download_data.py first, or set {override_env_var} to an exact file path."
+        )
+    chosen = max(matches, key=os.path.getmtime)
+    if len(matches) > 1:
+        others = ", ".join(os.path.basename(m) for m in matches if m != chosen)
+        print(f"Multiple {description} files found in data/; using the most recently modified: "
+              f"{os.path.basename(chosen)} (ignoring: {others})")
+    else:
+        print(f"Using {description}: {os.path.basename(chosen)}")
+    return chosen
+
+
+def parse_state_year(path):
+    '''Extracts (state_abbr, year) from a filename produced by
+    download_data.py, e.g. "nlcd_CO_2019.tif" -> ("CO", 2019). Falls back to
+    (None, year) for older filenames without a state code (e.g. the original
+    "nlcd_2020.tif" sample data), and to (None, None) if no year is found
+    either. Used only to name result outputs - not required for the
+    pipeline to run.'''
+    name = os.path.splitext(os.path.basename(path))[0]
+    match = re.match(r"^(?:nlcd|BUPL)_([A-Za-z]{2})_(\d{4})$", name)
+    if match:
+        return match.group(1), int(match.group(2))
+    match = re.match(r"^(?:nlcd|BUPL)_(\d{4})$", name)
+    if match:
+        return None, int(match.group(1))
+    return None, None
+
+
 # DATA PREPARATION
 # Define the NLCD raster from the data folder.
 # This is the input raster that you can clip to your own study area of interest.
 # You can use our sample data area for LA, or you can clip an NLCD
 # raster to your own area of interest and input the name and path the line below.
-nlcd = sa.Raster(os.path.join(BASE_DIR, "data", "nlcd_2020.tif"))
+nlcd_path = find_data_file("nlcd_*.tif", "NLCD raster", "WUI_NLCD_PATH")
+nlcd = sa.Raster(nlcd_path)
 print("NLCD height:",nlcd.height)
 print("NLCD width:",nlcd.width)
 print("NLCD cell height:",nlcd.meanCellHeight)
@@ -39,30 +88,67 @@ print("NLCD cell width:",nlcd.meanCellWidth)
 
 # Define the BUPL raster
 # We will clip the BUPL raster in this script, so you can use a larger BUPL raster if you want.
-bupl = sa.Raster(os.path.join(BASE_DIR, "data", "BUPL_2020.tif"))
-arcpy.env.snapRaster = nlcd #https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/snap-raster.htm
-# Snap raster allows us to make sure extents of both NLCD and BUPL rasters are the same
-arcpy.env.extent = nlcd.extent
+bupl_path = find_data_file("BUPL_*.tif", "BUPL raster", "WUI_BUPL_PATH")
+bupl = sa.Raster(bupl_path)
 arcpy.env.cellSize = bupl.meanCellHeight
 print("BUPL height:",bupl.height)
 print("BUPL width:",bupl.width)
 print("BUPL cell height:",bupl.meanCellHeight)
 print("BUPL cell width:",bupl.meanCellWidth)
 
+# Tag result output filenames with the state/year the input data came from
+# (when download_data.py's naming convention is detected), so results from
+# different runs don't overwrite each other in results/.
+_nlcd_state, _nlcd_year = parse_state_year(nlcd_path)
+_bupl_state, _bupl_year = parse_state_year(bupl_path)
+_result_state = _nlcd_state or _bupl_state
+_result_year = _nlcd_year or _bupl_year
+if _result_state and _result_year:
+    RESULT_TAG = f"_{_result_state}_{_result_year}"
+elif _result_year:
+    RESULT_TAG = f"_{_result_year}"
+else:
+    RESULT_TAG = ""
+
 # reproject NLCD raster to match BUPL
 # Also, we're saving all intermediate steps to a 'steps' folder
+#
+# Note: env.snapRaster/env.extent are deliberately NOT set to nlcd here, even
+# though nlcd defines the study area. nlcd is still in its original CRS at this
+# point (e.g. geographic degrees, if it came from download_data.py), while
+# ProjectRaster's output is in bupl's CRS (typically projected, meters). Setting
+# env.extent from a geographic-CRS raster while outputting into a projected CRS
+# was found to make ArcGIS silently misinterpret the extent bounds - reproduced
+# with a Rhode Island test case where it produced a wildly distorted output
+# (16463 x 368 cells instead of the correct ~469 x 368) with no error at all.
 nlcd_reproject = arcpy.management.ProjectRaster(nlcd,'steps/nlcd_reproject.tif',bupl.spatialReference,"NEAREST", env.cellSize)
 
 # resample NLCD raster to match BUPL
 nlcd_resample = arcpy.management.Resample(nlcd_reproject, 'steps/nlcd_resample.tif', env.cellSize, "NEAREST")
 nlcd_resample = sa.Raster('steps/nlcd_resample.tif')
 
+# NOW it's safe to set snap raster / extent, using nlcd_resample - already
+# reprojected into bupl's CRS - as the reference instead of the original nlcd.
+arcpy.env.snapRaster = nlcd_resample #https://pro.arcgis.com/en/pro-app/latest/tool-reference/environment-settings/snap-raster.htm
+# Snap raster allows us to make sure extents of both NLCD and BUPL rasters are the same
+arcpy.env.extent = nlcd_resample.extent
+
 # Clip the BUPL data to the NLCD. This allows the user to just input
 # a clip of the NLCD, and select a BUPL layer of their choice (for whole US).
 # The BUPL is low enough resolution that this is still fairly efficient.
-# To clip, we use extract by rectangle, which prevents NoData values on the edges.
-bupl_clipped = sa.ExtractByRectangle(bupl, nlcd_resample)
-bupl_clipped.save("steps/BUPL_Clipped.tif")
+#
+# sa.ExtractByRectangle(bupl, nlcd_resample) reliably crashed ArcGIS Pro's
+# Python (STATUS_HEAP_CORRUPTION) here - root-caused by stepping through this
+# script line by line in pdb, which pinned the crash to this exact call
+# regardless of input raster size (ruling out the earlier CONUS-vs-state-size
+# theory as the cause of THIS particular crash). arcpy.management.Clip is a
+# different tool (Data Management, not Spatial Analyst) that produces the
+# same clipped-to-BUPL's-own-grid result without crashing. MAINTAIN_EXTENT is
+# required: NO_MAINTAIN_EXTENT (the default) let the output drift a couple of
+# cells larger than nlcd_resample, breaking the NLCD/BUPL same-size invariant
+# this pipeline depends on throughout.
+arcpy.management.Clip(bupl, "#", "steps/BUPL_Clipped.tif", nlcd_resample, "", "NONE", "MAINTAIN_EXTENT")
+bupl_clipped = sa.Raster("steps/BUPL_Clipped.tif")
 arcpy.env.mask = bupl_clipped
 #Use extract by mask to make sure they are the same size
 nlcd_final = sa.ExtractByMask(nlcd_resample, bupl_clipped)
@@ -259,7 +345,7 @@ print("WUI interface map complete")
 wui_intermix_reclass = numpy.where((wui_intermix_select == 1), 2, 0)
 wui_class_combine = wui_intermix_reclass + wui_interface_select
 wui_class_combine_r = arcpy.NumPyArrayToRaster(wui_class_combine, lowLeftPnt,cellSize,cellSize)
-wui_class_combine_r.save('results/wui.tif')
+wui_class_combine_r.save(f'results/wui{RESULT_TAG}.tif')
 
 print("***************************************")
 print("***Summarizing User Input parameters***")
@@ -274,7 +360,7 @@ print("*******WUI MAP COMPLETE******* (Go check your results folder)")
 #Vegetation mapping using moving window outputs
 if vegCheckQ1 == 'yes':
     print("working on applying vegetation classes to WUI map...")
-    wui_mapping_module.mapVegWUI(result,lowLeftPnt,cellSize,wui_interface_select,wui_intermix_select)
+    wui_mapping_module.mapVegWUI(result,lowLeftPnt,cellSize,wui_interface_select,wui_intermix_select,RESULT_TAG)
 
 #Comparison statistics to SILVIS WUI map and confusion matrix
 while True:

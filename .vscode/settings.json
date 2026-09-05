@@ -1,0 +1,5 @@
+{
+    "python.defaultInterpreterPath": "C:\\Users\\warno\\AppData\\Local\\ESRI\\conda\\envs\\wui_mapping\\python.exe",
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
+}
